@@ -1,8 +1,67 @@
+-- === Stable Sort ===
+
+--- @param list any[]
+--- @param workingList any[]
+--- @param sortFunction fun( a, b ) : boolean
+local function bindMergeSort( list, workingList, sortFunction )
+    local function merge( start, finish )
+        local left = start
+        local leftFinish = math.floor( ( start + finish ) * 0.5 )
+        local right = leftFinish + 1
+
+        for index = start, finish do
+            if right > finish then
+                workingList[ index ] = list[ left ]
+                left = left + 1
+
+            elseif sortFunction( list[ left ], list[ right ] ) and left <= leftFinish then
+                workingList[ index ] = list[ left ]
+                left = left + 1
+
+            else
+                workingList[ index ] = list[ right ]
+                right = right + 1
+            end
+        end
+
+        for index = start, finish do
+            list[ index ] = workingList[ index ]
+        end
+    end
+
+    local function mergeSort( start, finish )
+        if start >= finish then return end
+
+        local middle = math.floor( ( start + finish ) * 0.5 )
+
+        mergeSort( start, middle )
+        mergeSort( middle + 1, finish )
+
+        merge( start, finish )
+    end
+
+    return mergeSort
+end
+
+
+--- @param list any[]
+--- @param sortFunction ( fun( a : any, b : any ) : boolean )
+local function sortList( list, sortFunction )
+    local workingList = { unpack( list ) }
+    local result = { unpack( list ) }
+    local sort = bindMergeSort( result, workingList, sortFunction )
+
+    sort( 1, #list )
+
+    return result
+end
+
+
 -- === Sparse Set ===
 
 --- @class Dark.SparseSet : table
---- @field private dense any[]
---- @field private sparse { [any] : integer }
+--- @field dense any[]
+--- @field sparse { [any] : integer }
 --- @overload fun() : Dark.SparseSet
 local SparseSet = setmetatable( {}, { __call = function ( self )
     return setmetatable( { dense = {}, sparse = {} }, self )
@@ -59,23 +118,21 @@ end
 --- @alias Dark.Entity table
 --- @alias Dark.Filter fun( entity : Dark.Entity ) : boolean
 --- @alias Dark.Run fun( entity : Dark.Entity, deltaTime : number? )
-local lib = {}
+local dark = {}
 
 
 -- Filter
 
 local filterHelpers = {}
-lib.filters = filterHelpers
+dark.filters = filterHelpers
 
 
 --- This filter will only allow entities who have all of these components.
---- @param ... string #Component names
+--- @param components string[] #Component names
 --- @return Dark.Filter
-function filterHelpers.all( ... )
-    local requiredComponents = { ... }
-
+function filterHelpers.all( components )
     return function ( entity )
-        for _, component in ipairs( requiredComponents ) do
+        for _, component in ipairs( components ) do
             if entity[ component ] == nil then return false end
         end
 
@@ -85,13 +142,11 @@ end
 
 
 --- This filter will allow entities who have any of these components.
---- @param ... string #Component names
+--- @param components string[] #Component names
 --- @return Dark.Filter
-function filterHelpers.any( ... )
-    local requiredComponents = { ... }
-
+function filterHelpers.any( components )
     return function ( entity )
-        for _, component in ipairs( requiredComponents ) do
+        for _, component in ipairs( components ) do
             if entity[ component ] ~= nil then return true end
         end
 
@@ -101,21 +156,20 @@ end
 
 
 --- This filter will only allow entities that have these and only these components.
---- @param ... string #Component names
+--- @param components string[] #Component names
 --- @return Dark.Filter
-function filterHelpers.exact( ... )
-    local requiredComponents = select( "#", ... )
-    local requireAll = filterHelpers.all( ... )
+function filterHelpers.exact( components )
+    local requireAll = filterHelpers.all( components )
 
     return function ( entity )
         local keyCount = 0
 
         for _, _ in pairs( entity ) do
             keyCount = keyCount + 1
-            if keyCount > requiredComponents then return false end
+            if keyCount > #components then return false end
         end
 
-        if keyCount < requiredComponents then return false end
+        if keyCount < #components then return false end
 
         return requireAll( entity )
     end
@@ -123,13 +177,11 @@ end
 
 
 --- This filter will reject entities that have any of these components, allowing all others.
---- @param ... string #Component names
+--- @param components string[] #Component names
 --- @return Dark.Filter
-function filterHelpers.rejectAny( ... )
-    local requiredComponents = { ... }
-
+function filterHelpers.rejectAny( components )
     return function ( entity )
-        for _, component in ipairs( requiredComponents ) do
+        for _, component in ipairs( components ) do
             if entity[ component ] ~= nil then return false end
         end
 
@@ -139,13 +191,11 @@ end
 
 
 --- This filter will reject entities that have all of these components, allowing all others.
---- @param ... string #Component names
+--- @param components string[] #Component names
 --- @return Dark.Filter
-function filterHelpers.rejectAll( ... )
-    local requiredComponents = { ... }
-
+function filterHelpers.rejectAll( components )
     return function ( entity )
-        for _, component in ipairs( requiredComponents ) do
+        for _, component in ipairs( components ) do
             if entity[ component ] == nil then return true end
         end
 
@@ -164,7 +214,7 @@ local worldMetatable = { __index = World }
 
 
 --- @return World
-function lib.makeWorld( )
+function dark.makeWorld( )
     return setmetatable( {
         archetypeEntities = {},
         allEntities = SparseSet()
@@ -220,14 +270,23 @@ function World:runSystem( system, deltaTime )
     local archetype = system.archetype
     local archetypeEntities = self.archetypeEntities[ archetype ]
     local run = system.run
+    local sort = system.sort
 
     if archetypeEntities == nil then
         self:initSystem( system )
         archetypeEntities = self.archetypeEntities[ archetype ]
     end
 
-    for entity in archetypeEntities:iterate() do
-        run( entity, deltaTime )
+    if sort ~= nil then
+        local sortedEntities = sortList( archetypeEntities.dense, sort )
+
+        for _, entity in ipairs( sortedEntities ) do
+            run( entity, deltaTime )
+        end
+    else
+        for entity in archetypeEntities:iterate() do
+            run( entity, deltaTime )
+        end
     end
 end
 
@@ -237,15 +296,17 @@ end
 --- @class Dark.System
 --- @field package archetype Dark.Archetype
 --- @field package run Dark.Run
+--- @field package sort? fun( a : Dark.Entity, b : Dark.Entity ) : boolean
 local System = {}
 local systemMetatable = { __index = System }
 
 
 --- @param archetype Dark.Archetype
 --- @param run Dark.Run
+--- @param sort? fun( a : Dark.Entity, b : Dark.Entity ) : boolean
 --- @return Dark.System
-function lib.makeSystem( archetype, run )
-    local system = { archetype = archetype, run = run }
+function dark.makeSystem( archetype, run, sort )
+    local system = { archetype = archetype, run = run, sort = sort }
     return setmetatable( system, systemMetatable )
 end
 
@@ -260,7 +321,7 @@ local archetypeMetatable = { __index = Archetype }
 
 --- @param ... Dark.Filter | Dark.Archetype
 --- @return Dark.Archetype
-function lib.makeArchetype( ... )
+function dark.makeArchetype( ... )
     local archetype = { filters = {} }
 
     for index = 1, select( "#", ... ) do
@@ -292,4 +353,4 @@ function Archetype:filterEntity( entity )
 end
 
 
-return lib
+return dark
