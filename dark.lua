@@ -206,7 +206,7 @@ end
 
 -- World
 
---- @class World
+--- @class Dark.World
 --- @field package archetypeEntities { [Dark.Archetype] : Dark.SparseSet }
 --- @field package allEntities Dark.SparseSet
 local World = {}
