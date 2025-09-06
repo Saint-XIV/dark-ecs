@@ -213,7 +213,7 @@ local World = {}
 local worldMetatable = { __index = World }
 
 
---- @return World
+--- @return Dark.World
 function dark.makeWorld( )
     return setmetatable( {
         archetypeEntities = {},
